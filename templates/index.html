@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Phát hiện Email Lừa đảo</title>
+
+    <style>
+        body {
+            font-family: Arial;
+            background: linear-gradient(to right, #667eea, #764ba2);
+            text-align: center;
+            padding: 40px;
+        }
+
+        .card {
+            background: white;
+            width: 720px;
+            margin: auto;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 0 25px rgba(0,0,0,0.2);
+        }
+
+        textarea {
+            width: 100%;
+            height: 160px;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+        }
+
+        button {
+            padding: 12px 25px;
+            margin-top: 10px;
+            background: #4CAF50;
+            color: white;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #45a049;
+        }
+
+        .safe { color: green; font-weight: bold; }
+        .danger { color: red; font-weight: bold; }
+
+        .progress {
+            background: #ddd;
+            border-radius: 20px;
+            margin: 15px 0;
+        }
+
+        .progress-bar {
+            height: 22px;
+            border-radius: 20px;
+        }
+
+        .box {
+            text-align: left;
+            margin-top: 20px;
+            padding: 15px;
+            background: #f7f7f7;
+            border-radius: 10px;
+        }
+
+        .tag {
+            background: orange;
+            color: white;
+            padding: 6px 10px;
+            margin: 4px;
+            display: inline-block;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="card">
+
+    <h2>🛡️ HỆ THỐNG PHÁT HIỆN EMAIL LỪA ĐẢO</h2>
+
+    <form action="/predict" method="post">
+        <textarea name="email" placeholder="Nhập nội dung email cần kiểm tra..."></textarea>
+        <br>
+        <button type="submit">🔍 Phân tích</button>
+    </form>
+
+    {% if prediction is defined %}
+
+        {% if prediction == 1 %}
+            <h3 class="danger">⚠️ EMAIL LỪA ĐẢO</h3>
+        {% else %}
+            <h3 class="safe">✅ EMAIL AN TOÀN</h3>
+        {% endif %}
+
+        <p>📊 Xác suất: <b>{{ probability }}%</b></p>
+
+        <div class="progress">
+            <div class="progress-bar"
+                 style="width: {{ probability }}%;
+                 background: {% if probability > 70 %}red{% elif probability > 40 %}orange{% else %}green{% endif %};">
+            </div>
+        </div>
+
+        <!-- 🔥 CẢNH BÁO THÔNG MINH -->
+        {% if warning %}
+        <div class="box" style="background:#ffe6e6; color:red;">
+            <b>{{ warning }}</b>
+        </div>
+        {% endif %}
+
+        <!-- 📊 THỐNG KÊ -->
+        <div class="box">
+            <b>📌 Thống kê:</b><br>
+            - Số URL: {{ url_count }}<br>
+            - Số từ khóa nghi ngờ: {{ keyword_score }}
+        </div>
+
+    {% endif %}
+
+    <!-- 🔗 URL -->
+    {% if urls %}
+    <div class="box">
+        <h4>🔗 Phân tích đường link:</h4>
+        <ul>
+            {% for url, score, status in urls %}
+                <li><b>{{ url }}</b> → {{ status }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <!-- 🧠 EXPLAIN -->
+    {% if explain %}
+    <div class="box">
+        <h4>🧠 Lý do bị đánh dấu:</h4>
+        {% for w in explain %}
+            <span class="tag">{{ w }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+</div>
+
+</body>
+</html>
