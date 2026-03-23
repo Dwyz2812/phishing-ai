@@ -16,11 +16,17 @@ vectorizer = pickle.load(open("tfidf_vectorizer.pkl", "rb"))
 phishing_keywords = [
     "urgent", "verify", "login", "account", "bank",
     "password", "click", "limited", "suspended",
-    "update", "confirm", "security", "alert","document", "link", "attachment"
+    "update", "confirm", "security", "alert","document", "link", "attachment",
+    "immediately", "action required", "unauthorized",
+    "suspicious", "locked", "disable", "verify now",
+    "reset", "billing", "payment", "invoice",
+    "prize", "winner", "claim", "free",
+    "gift", "bonus", "offer", "reward",
+    "deadline", "expire", "final notice"
 ]
 
 # =========================
-# TRUSTED SERVICES (sandbox giả lập)
+# TRUSTED SERVICES 
 # =========================
 trusted_services = [
     "docs.google.com",
@@ -83,7 +89,7 @@ def predict():
     X_input, keyword_score = extract_features(text)
     ai_prob = model.predict_proba(X_input)[0][1]
 
-    prediction = 1 if ai_prob >= 0.5 else 0
+    prediction = 1 if ai_prob >= 0.6 else 0
     prob = ai_prob
 
     # ===== URL =====
@@ -108,7 +114,7 @@ def predict():
         url_results.append((url, score, status))
 
     # ===== KEYWORD RULE =====
-    keyword_flag = keyword_score >= 3
+    keyword_flag = keyword_score >= 2
 
     # ===== COMBINE LOGIC (🔥 FIX QUAN TRỌNG) =====
     warning_message = None
