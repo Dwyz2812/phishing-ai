@@ -18,14 +18,16 @@ phishing_keywords = [
     "password", "click", "limited", "suspended",
     "update", "confirm", "security", "alert",
     "immediately", "action required",
-    "reset", "billing", "payment", "invoice"
+    "reset", "billing", "payment", "invoice",
+
+    # NEW
+    "policy", "violation", "evidence", "activity"
 ]
 
 # =========================
-# TRUSTED SERVICES
-# =========================
 trusted_services = [
-    "google.com", "dropbox.com", "microsoft.com"
+    "google.com", "dropbox.com", "microsoft.com",
+    "hutech.edu.vn", "edu.vn"
 ]
 
 # =========================
@@ -34,12 +36,13 @@ trusted_services = [
 def extract_urls(text):
     urls = re.findall(r'https?://\S+|www\.\S+', text)
 
-    # 🔥 detect anchor text (KHÔNG trùng)
     anchor_patterns = [
         "click here",
         "verify your account",
         "login now",
-        "reset password"
+        "reset password",
+        "view evidence",
+        "download"
     ]
 
     found = []
@@ -57,12 +60,14 @@ def analyze_url(url):
     score = 0
     reasons = []
 
-    # 🔥 anchor text
     if "[ANCHOR]" in url:
         return 3, ["Link ẩn dạng nút bấm"]
 
     parsed = urlparse(url)
     domain = parsed.netloc.lower()
+
+    if any(service in domain for service in trusted_services):
+        return 0, ["Domain thuộc hệ thống uy tín"]
 
     if any(char.isdigit() for char in domain):
         score += 2
@@ -88,20 +93,19 @@ def analyze_url(url):
 
 
 # =========================
-# 🔥 SENDER FIX MẠNH
+# SENDER
 # =========================
 def analyze_sender(text):
-    # Bắt email chuẩn trước (ưu tiên trong <>)
     match = re.search(r'<([\w\.-]+@[\w\.-]+)>', text)
 
     if not match:
-        # fallback: bắt email bình thường
         match = re.search(r'[\w\.-]+@[\w\.-]+', text)
 
     if not match:
-        return None, []
+        return None, [], 0
 
-    email = match.group(1).lower() if "<" in match.group(0) else match.group(0).lower()
+    email = match.group(1) if "<" in match.group(0) else match.group(0)
+    email = email.lower()
     domain = email.split("@")[-1]
 
     reasons = []
@@ -123,7 +127,8 @@ def analyze_sender(text):
                 score += 3
                 reasons.append(f"Giả danh {brand.upper()}")
 
-    trusted_flat = [d for sub in brand_domains.values() for d in sub]
+    trusted_flat = [d for sub in brand_domains.values() for d in sub] + ["edu.vn", "hutech.edu.vn"]
+
     if not any(d in domain for d in trusted_flat):
         score += 2
         reasons.append("Domain người gửi không uy tín")
@@ -136,7 +141,9 @@ def analyze_sender(text):
         score += 1
         reasons.append("Domain dài bất thường")
 
-    return email, reasons
+    return email, reasons, score
+
+
 # =========================
 # FEATURE
 # =========================
@@ -153,11 +160,63 @@ def explain_text(text):
 
 
 # =========================
+# 🔥 RISK SCORING SYSTEM
+# =========================
+def calculate_risk(ai_prob, keyword_score, url_results, sender_score, text):
+    risk = 0
+    reasons = []
+
+    # AI
+    if ai_prob > 0.8:
+        risk += 4
+        reasons.append("AI đánh giá rất nguy hiểm")
+    elif ai_prob > 0.6:
+        risk += 2
+
+    # Keyword
+    if keyword_score >= 3:
+        risk += 2
+        reasons.append("Nhiều từ khóa đáng ngờ")
+
+    # URL
+    for u in url_results:
+        if u["score"] >= 3:
+            risk += 3
+            reasons.append("Link nguy hiểm")
+        elif u["score"] >= 1:
+            risk += 1
+
+    # Sender
+    if sender_score >= 3:
+        risk += 3
+        reasons.append("Người gửi giả mạo")
+    elif sender_score >= 1:
+        risk += 1
+
+    # Template
+    if "{{" in text and "}}" in text:
+        risk += 4
+        reasons.append("Email template (phishing kit)")
+
+    # Social engineering
+    if any(x in text.lower() for x in ["violation", "evidence", "urgent action"]):
+        risk += 2
+        reasons.append("Dấu hiệu gây áp lực")
+
+    # 🔥 SAFE BOOST (giảm false positive)
+    if "edu.vn" in text.lower() or "university" in text.lower():
+        risk -= 2
+
+    return risk, reasons
+
+
+# =========================
 @app.route("/")
 def home():
     return render_template("index.html")
 
 
+# =========================
 @app.route("/predict", methods=["POST"])
 def predict():
     text = request.form["email"]
@@ -166,20 +225,15 @@ def predict():
     X_input, keyword_score = extract_features(text)
     ai_prob = model.predict_proba(X_input)[0][1]
 
-    prediction = 1 if ai_prob >= 0.6 else 0
-    prob = ai_prob
-
     # ===== URL =====
     urls = extract_urls(text)
     url_results = []
-    url_flag = False
 
     for url in urls:
         score, reasons = analyze_url(url)
 
         if score >= 3:
             status = "🚨 Nguy hiểm"
-            url_flag = True
         elif score >= 1:
             status = "⚠️ Đáng ngờ"
         else:
@@ -193,27 +247,26 @@ def predict():
         })
 
     # ===== SENDER =====
-    sender_email, sender_reasons = analyze_sender(text)
-    sender_flag = len(sender_reasons) > 0
+    sender_email, sender_reasons, sender_score = analyze_sender(text)
 
-    # ===== LOGIC =====
-    warning = None
+    # ===== 🔥 RISK SYSTEM =====
+    risk_score, risk_reasons = calculate_risk(
+        ai_prob, keyword_score, url_results, sender_score, text
+    )
 
-    if url_flag:
+    # ===== FINAL DECISION =====
+    if risk_score >= 7:
         prediction = 1
-        prob = max(prob, 0.85)
-        warning = "⚠️ Email chứa link nguy hiểm"
-
-    elif sender_flag:
+        warning = "🚨 Nguy cơ cao (phishing)"
+    elif risk_score >= 4:
         prediction = 1
-        prob = max(prob, 0.8)
-        warning = "⚠️ Người gửi giả mạo"
+        warning = "⚠️ Email đáng ngờ"
+    else:
+        prediction = 0
+        warning = None
 
-    elif keyword_score >= 2:
-        prediction = 1
-        prob = max(prob, 0.75)
+    prob = max(ai_prob, min(risk_score / 10, 1))
 
-    # ===== RETURN =====
     return render_template(
         "index.html",
         prediction=prediction,
@@ -224,9 +277,12 @@ def predict():
         url_count=len(urls),
         warning=warning,
         sender=sender_email,
-        sender_reasons=sender_reasons
+        sender_reasons=sender_reasons,
+        risk_score=risk_score,
+        risk_reasons=risk_reasons
     )
 
 
+# =========================
 if __name__ == "__main__":
     app.run(debug=True)
