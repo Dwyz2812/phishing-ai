@@ -14,7 +14,7 @@
 
         .card {
             background: white;
-            width: 720px;
+            width: 750px;
             margin: auto;
             padding: 30px;
             border-radius: 15px;
@@ -27,6 +27,7 @@
             padding: 12px;
             border-radius: 8px;
             border: 1px solid #ccc;
+            resize: none;
         }
 
         button {
@@ -37,6 +38,7 @@
             border-radius: 8px;
             border: none;
             cursor: pointer;
+            font-size: 15px;
         }
 
         button:hover {
@@ -73,6 +75,22 @@
             display: inline-block;
             border-radius: 5px;
         }
+
+        .reason {
+            color: #b30000;
+            margin-left: 15px;
+            font-size: 14px;
+        }
+
+        .url-safe { color: green; }
+        .url-warning { color: orange; }
+        .url-danger { color: red; font-weight: bold; }
+
+        .sender-box {
+            background: #fff3cd;
+            border-left: 5px solid orange;
+        }
+
     </style>
 </head>
 
@@ -83,7 +101,7 @@
     <h2>🛡️ HỆ THỐNG PHÁT HIỆN EMAIL LỪA ĐẢO</h2>
 
     <form action="/predict" method="post">
-        <textarea name="email" placeholder="Nhập nội dung email cần kiểm tra..."></textarea>
+        <textarea name="email" placeholder="Nhập nội dung email cần kiểm tra...">{{ request.form.email }}</textarea>
         <br>
         <button type="submit">🔍 Phân tích</button>
     </form>
@@ -105,7 +123,7 @@
             </div>
         </div>
 
-        <!-- 🔥 CẢNH BÁO THÔNG MINH -->
+        <!-- 🔥 CẢNH BÁO -->
         {% if warning %}
         <div class="box" style="background:#ffe6e6; color:red;">
             <b>{{ warning }}</b>
@@ -119,22 +137,58 @@
             - Số từ khóa nghi ngờ: {{ keyword_score }}
         </div>
 
+        <!-- 📧 SENDER -->
+        {% if sender %}
+        <div class="box sender-box">
+            <h4>📧 Phân tích người gửi:</h4>
+            <p><b>{{ sender }}</b></p>
+
+            {% if sender_reasons and sender_reasons|length > 0 %}
+                <ul class="reason">
+                    {% for r in sender_reasons %}
+                        <li>🔸 {{ r }}</li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p class="safe">Không phát hiện dấu hiệu giả mạo</p>
+            {% endif %}
+        </div>
+        {% endif %}
+
     {% endif %}
 
     <!-- 🔗 URL -->
-    {% if urls %}
+    {% if urls and urls|length > 0 %}
     <div class="box">
         <h4>🔗 Phân tích đường link:</h4>
-        <ul>
-            {% for url, score, status in urls %}
-                <li><b>{{ url }}</b> → {{ status }}</li>
-            {% endfor %}
-        </ul>
+
+        {% for u in urls %}
+            <p>
+                <b>{{ u.url }}</b> →
+                <span class="
+                    {% if 'Nguy hiểm' in u.status %}url-danger
+                    {% elif 'Đáng ngờ' in u.status %}url-warning
+                    {% else %}url-safe{% endif %}
+                ">
+                    {{ u.status }}
+                </span>
+                (score: {{ u.score }})
+            </p>
+
+            {% if u.reasons and u.reasons|length > 0 %}
+                <ul class="reason">
+                    {% for r in u.reasons %}
+                        <li>🔸 {{ r }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+        {% endfor %}
+
     </div>
     {% endif %}
 
     <!-- 🧠 EXPLAIN -->
-    {% if explain %}
+    {% if explain and explain|length > 0 %}
     <div class="box">
         <h4>🧠 Lý do bị đánh dấu:</h4>
         {% for w in explain %}

@@ -16,70 +16,147 @@ vectorizer = pickle.load(open("tfidf_vectorizer.pkl", "rb"))
 phishing_keywords = [
     "urgent", "verify", "login", "account", "bank",
     "password", "click", "limited", "suspended",
-    "update", "confirm", "security", "alert","document", "link", "attachment",
-    "immediately", "action required", "unauthorized",
-    "suspicious", "locked", "disable", "verify now",
-    "reset", "billing", "payment", "invoice",
-    "prize", "winner", "claim", "free",
-    "gift", "bonus", "offer", "reward",
-    "deadline", "expire", "final notice"
+    "update", "confirm", "security", "alert",
+    "immediately", "action required",
+    "reset", "billing", "payment", "invoice"
 ]
 
 # =========================
-# TRUSTED SERVICES 
+# TRUSTED SERVICES
 # =========================
 trusted_services = [
-    "docs.google.com",
-    "drive.google.com",
-    "dropbox.com"
+    "google.com", "dropbox.com", "microsoft.com"
 ]
 
 # =========================
-# URL FUNCTIONS
+# URL EXTRACT
 # =========================
 def extract_urls(text):
-    return re.findall(r'https?://\S+|www\.\S+', text)
+    urls = re.findall(r'https?://\S+|www\.\S+', text)
 
+    # 🔥 detect anchor text (KHÔNG trùng)
+    anchor_patterns = [
+        "click here",
+        "verify your account",
+        "login now",
+        "reset password"
+    ]
+
+    found = []
+    for p in anchor_patterns:
+        if p in text.lower():
+            found.append(f"[ANCHOR] {p}")
+
+    return urls + list(set(found))
+
+
+# =========================
+# URL ANALYZE
+# =========================
 def analyze_url(url):
     score = 0
-    domain = urlparse(url).netloc
+    reasons = []
 
-    if "-" in domain: score += 1
-    if len(domain) > 25: score += 1
-    if domain.count('.') > 2: score += 1
-    if any(char.isdigit() for char in domain): score += 1
-    if not url.startswith("https"): score += 1
+    # 🔥 anchor text
+    if "[ANCHOR]" in url:
+        return 3, ["Link ẩn dạng nút bấm"]
 
-    if any(service in domain for service in trusted_services):
+    parsed = urlparse(url)
+    domain = parsed.netloc.lower()
+
+    if any(char.isdigit() for char in domain):
+        score += 2
+        reasons.append("Domain chứa số")
+
+    if any(word in domain for word in ["bank", "login", "verify"]):
+        score += 2
+        reasons.append("Domain chứa từ nhạy cảm")
+
+    if domain.count('.') > 2:
         score += 1
+        reasons.append("Nhiều subdomain")
 
-    return score
+    if len(domain) > 25:
+        score += 1
+        reasons.append("Domain dài bất thường")
 
+    if not url.startswith("https"):
+        score += 1
+        reasons.append("Không HTTPS")
+
+    return score, reasons
+
+
+# =========================
+# 🔥 SENDER FIX MẠNH
+# =========================
+def analyze_sender(text):
+    # Bắt email chuẩn trước (ưu tiên trong <>)
+    match = re.search(r'<([\w\.-]+@[\w\.-]+)>', text)
+
+    if not match:
+        # fallback: bắt email bình thường
+        match = re.search(r'[\w\.-]+@[\w\.-]+', text)
+
+    if not match:
+        return None, []
+
+    email = match.group(1).lower() if "<" in match.group(0) else match.group(0).lower()
+    domain = email.split("@")[-1]
+
+    reasons = []
+    score = 0
+
+    brand_domains = {
+        "microsoft": ["outlook.com", "hotmail.com", "microsoft.com"],
+        "google": ["gmail.com", "google.com"],
+        "apple": ["apple.com", "icloud.com"],
+        "paypal": ["paypal.com"],
+        "amazon": ["amazon.com"]
+    }
+
+    text_lower = text.lower()
+
+    for brand, domains in brand_domains.items():
+        if brand in text_lower:
+            if not any(d in domain for d in domains):
+                score += 3
+                reasons.append(f"Giả danh {brand.upper()}")
+
+    trusted_flat = [d for sub in brand_domains.values() for d in sub]
+    if not any(d in domain for d in trusted_flat):
+        score += 2
+        reasons.append("Domain người gửi không uy tín")
+
+    if any(x in domain for x in ["0", "1", "l", "rn"]):
+        score += 1
+        reasons.append("Domain có dấu hiệu giả mạo ký tự")
+
+    if len(domain) > 25:
+        score += 1
+        reasons.append("Domain dài bất thường")
+
+    return email, reasons
 # =========================
 # FEATURE
 # =========================
 def extract_features(text):
-    X_tfidf = vectorizer.transform([text]).toarray()
-
-    word_count = len(text.split())
+    X = vectorizer.transform([text]).toarray()
     keyword_score = sum(1 for w in phishing_keywords if w in text.lower())
+    extra = np.array([[len(text.split()), keyword_score]])
+    return np.hstack((X, extra)), keyword_score
 
-    extra = np.array([[word_count, keyword_score]])
 
-    return np.hstack((X_tfidf, extra)), keyword_score
-
-# =========================
-# EXPLAIN
 # =========================
 def explain_text(text):
     return [w for w in phishing_keywords if w in text.lower()]
 
-# =========================
-# ROUTES
+
 # =========================
 @app.route("/")
 def home():
     return render_template("index.html")
+
 
 @app.route("/predict", methods=["POST"])
 def predict():
@@ -98,55 +175,58 @@ def predict():
     url_flag = False
 
     for url in urls:
-        score = analyze_url(url)
+        score, reasons = analyze_url(url)
 
-        if any(service in url for service in trusted_services):
-            status = "⚠️ Cần kiểm tra thêm (dịch vụ trung gian)"
+        if score >= 3:
+            status = "🚨 Nguy hiểm"
             url_flag = True
-
-        elif score >= 2:
+        elif score >= 1:
             status = "⚠️ Đáng ngờ"
-            url_flag = True
-
         else:
             status = "✅ An toàn"
 
-        url_results.append((url, score, status))
+        url_results.append({
+            "url": url,
+            "score": score,
+            "status": status,
+            "reasons": reasons
+        })
 
-    # ===== KEYWORD RULE =====
-    keyword_flag = keyword_score >= 2
+    # ===== SENDER =====
+    sender_email, sender_reasons = analyze_sender(text)
+    sender_flag = len(sender_reasons) > 0
 
-    # ===== COMBINE LOGIC (🔥 FIX QUAN TRỌNG) =====
-    warning_message = None
+    # ===== LOGIC =====
+    warning = None
 
     if url_flag:
         prediction = 1
         prob = max(prob, 0.85)
+        warning = "⚠️ Email chứa link nguy hiểm"
 
-    elif keyword_flag:
+    elif sender_flag:
+        prediction = 1
+        prob = max(prob, 0.8)
+        warning = "⚠️ Người gửi giả mạo"
+
+    elif keyword_score >= 2:
         prediction = 1
         prob = max(prob, 0.75)
 
-    # 🔥 NEW: nội dung nguy hiểm dù link an toàn
-    elif ai_prob > 0.7:
-        prediction = 1
-        prob = ai_prob
-        warning_message = "⚠️ Nội dung email có dấu hiệu lừa đảo mặc dù link có vẻ an toàn"
-
-    # ===== EXPLAIN =====
-    explain_words = explain_text(text)
-
+    # ===== RETURN =====
     return render_template(
         "index.html",
         prediction=prediction,
         probability=round(prob * 100, 2),
         urls=url_results,
-        explain=explain_words,
+        explain=explain_text(text),
         keyword_score=keyword_score,
         url_count=len(urls),
-        warning=warning_message
+        warning=warning,
+        sender=sender_email,
+        sender_reasons=sender_reasons
     )
 
-# =========================
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run(debug=True)
