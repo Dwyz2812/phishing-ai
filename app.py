@@ -31,6 +31,28 @@ trusted_services = [
 ]
 
 # =========================
+# 🔥 HOMOGLYPH DETECTION
+# =========================
+def normalize_domain(domain):
+    replacements = {
+        "0": "o",
+        "1": "l",
+        "3": "e",
+        "5": "s",
+        "7": "t",
+        "@": "a",
+        "$": "s"
+    }
+
+    normalized = ""
+    for c in domain:
+        normalized += replacements.get(c.lower(), c.lower())
+
+    normalized = normalized.replace("rn", "m")
+
+    return normalized
+
+# =========================
 # URL EXTRACT
 # =========================
 def extract_urls(text):
@@ -52,7 +74,6 @@ def extract_urls(text):
 
     return urls + list(set(found))
 
-
 # =========================
 # URL ANALYZE
 # =========================
@@ -66,8 +87,18 @@ def analyze_url(url):
     parsed = urlparse(url)
     domain = parsed.netloc.lower()
 
+    # 🔥 check trusted
     if any(service in domain for service in trusted_services):
         return 0, ["Domain thuộc hệ thống uy tín"]
+
+    # 🔥 HOMOGLYPH CHECK
+    normalized = normalize_domain(domain)
+    fake_brands = ["paypal.com", "google.com", "microsoft.com", "amazon.com"]
+
+    for brand in fake_brands:
+        if brand not in domain and brand in normalized:
+            score += 3
+            reasons.append(f"Domain giả mạo giống {brand}")
 
     if any(char.isdigit() for char in domain):
         score += 2
@@ -90,7 +121,6 @@ def analyze_url(url):
         reasons.append("Không HTTPS")
 
     return score, reasons
-
 
 # =========================
 # SENDER
@@ -127,6 +157,15 @@ def analyze_sender(text):
                 score += 3
                 reasons.append(f"Giả danh {brand.upper()}")
 
+    # 🔥 HOMOGLYPH CHECK (SENDER)
+    normalized = normalize_domain(domain)
+
+    for brand, domains in brand_domains.items():
+        for real_domain in domains:
+            if real_domain not in domain and real_domain in normalized:
+                score += 3
+                reasons.append(f"Domain giả mạo giống {brand.upper()}")
+
     trusted_flat = [d for sub in brand_domains.values() for d in sub] + ["edu.vn", "hutech.edu.vn"]
 
     if not any(d in domain for d in trusted_flat):
@@ -143,7 +182,6 @@ def analyze_sender(text):
 
     return email, reasons, score
 
-
 # =========================
 # FEATURE
 # =========================
@@ -153,11 +191,9 @@ def extract_features(text):
     extra = np.array([[len(text.split()), keyword_score]])
     return np.hstack((X, extra)), keyword_score
 
-
 # =========================
 def explain_text(text):
     return [w for w in phishing_keywords if w in text.lower()]
-
 
 # =========================
 # 🔥 RISK SCORING SYSTEM
@@ -166,19 +202,16 @@ def calculate_risk(ai_prob, keyword_score, url_results, sender_score, text):
     risk = 0
     reasons = []
 
-    # AI
     if ai_prob > 0.8:
         risk += 4
         reasons.append("AI đánh giá rất nguy hiểm")
     elif ai_prob > 0.6:
         risk += 2
 
-    # Keyword
     if keyword_score >= 3:
         risk += 2
         reasons.append("Nhiều từ khóa đáng ngờ")
 
-    # URL
     for u in url_results:
         if u["score"] >= 3:
             risk += 3
@@ -186,46 +219,38 @@ def calculate_risk(ai_prob, keyword_score, url_results, sender_score, text):
         elif u["score"] >= 1:
             risk += 1
 
-    # Sender
     if sender_score >= 3:
         risk += 3
         reasons.append("Người gửi giả mạo")
     elif sender_score >= 1:
         risk += 1
 
-    # Template
     if "{{" in text and "}}" in text:
         risk += 4
         reasons.append("Email template (phishing kit)")
 
-    # Social engineering
     if any(x in text.lower() for x in ["violation", "evidence", "urgent action"]):
         risk += 2
         reasons.append("Dấu hiệu gây áp lực")
 
-    # 🔥 SAFE BOOST (giảm false positive)
     if "edu.vn" in text.lower() or "university" in text.lower():
         risk -= 2
 
     return risk, reasons
-
 
 # =========================
 @app.route("/")
 def home():
     return render_template("index.html")
 
-
 # =========================
 @app.route("/predict", methods=["POST"])
 def predict():
     text = request.form["email"]
 
-    # ===== AI =====
     X_input, keyword_score = extract_features(text)
     ai_prob = model.predict_proba(X_input)[0][1]
 
-    # ===== URL =====
     urls = extract_urls(text)
     url_results = []
 
@@ -246,15 +271,12 @@ def predict():
             "reasons": reasons
         })
 
-    # ===== SENDER =====
     sender_email, sender_reasons, sender_score = analyze_sender(text)
 
-    # ===== 🔥 RISK SYSTEM =====
     risk_score, risk_reasons = calculate_risk(
         ai_prob, keyword_score, url_results, sender_score, text
     )
 
-    # ===== FINAL DECISION =====
     if risk_score >= 7:
         prediction = 1
         warning = "🚨 Nguy cơ cao (phishing)"
@@ -281,7 +303,6 @@ def predict():
         risk_score=risk_score,
         risk_reasons=risk_reasons
     )
-
 
 # =========================
 if __name__ == "__main__":

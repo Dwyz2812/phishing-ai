@@ -100,6 +100,13 @@
             font-size: 13px;
             margin-top: 10px;
         }
+
+        /* 🔥 NEW */
+        .fake-domain {
+            color: purple;
+            font-weight: bold;
+        }
+
     </style>
 </head>
 
@@ -137,14 +144,10 @@
         <div class="box" style="background:#ffe6e6; color:red;">
             <b>{{ warning }}</b><br>
 
-            {% if "template" in warning %}
-                <div class="alert-badge">Template giả mạo</div>
-            {% elif "link" in warning %}
-                <div class="alert-badge">Link nguy hiểm</div>
-            {% elif "Người gửi" in warning %}
-                <div class="alert-badge">Giả mạo người gửi</div>
-            {% elif "đe dọa" in warning %}
-                <div class="alert-badge">Social Engineering</div>
+            {% if "Nguy cơ cao" in warning %}
+                <div class="alert-badge">High Risk Phishing</div>
+            {% elif "đáng ngờ" in warning %}
+                <div class="alert-badge">Suspicious Email</div>
             {% endif %}
         </div>
         {% endif %}
@@ -198,7 +201,13 @@
             {% if sender_reasons and sender_reasons|length > 0 %}
                 <ul class="reason">
                     {% for r in sender_reasons %}
-                        <li>🔸 {{ r }}</li>
+                        <li>
+                            🔸 {{ r }}
+
+                            {% if "homograph" in r %}
+                                <span class="fake-domain">⚠️ Fake domain</span>
+                            {% endif %}
+                        </li>
                     {% endfor %}
                 </ul>
             {% else %}
