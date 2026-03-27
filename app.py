@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request
-import pickle
+import joblib
 import numpy as np
 import re
 from urllib.parse import urlparse
@@ -7,8 +7,8 @@ from urllib.parse import urlparse
 app = Flask(__name__)
 
 # LOAD MODEL
-model = pickle.load(open("phishing_model.pkl", "rb"))
-vectorizer = pickle.load(open("tfidf_vectorizer.pkl", "rb"))
+model = joblib.load(open("phishing_model.pkl", "rb"))
+vectorizer = joblib.load(open("tfidf_vectorizer.pkl", "rb"))
 
 # =========================
 # KEYWORDS
