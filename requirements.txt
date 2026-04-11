@@ -1,5 +1,8 @@
-      flask
-      numpy
-      scikit-learn
-      xgboost
-      gunicorn
+        Flask
+        joblib
+        numpy
+        scikit-learn
+        requests
+        python-dotenv
+        gunicorn
+        xgboost
