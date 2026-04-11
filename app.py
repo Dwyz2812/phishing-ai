@@ -3,10 +3,21 @@ import joblib
 import numpy as np
 import re
 from urllib.parse import urlparse
+import requests
+import os
+from dotenv import load_dotenv
+
+# =========================
+# LOAD ENV
+# =========================
+load_dotenv()
+API_KEY = os.getenv("URLSCAN_API_KEY")
 
 app = Flask(__name__)
 
+# =========================
 # LOAD MODEL
+# =========================
 model = joblib.load(open("phishing_model.pkl", "rb"))
 vectorizer = joblib.load(open("tfidf_vectorizer.pkl", "rb"))
 
@@ -19,8 +30,6 @@ phishing_keywords = [
     "update", "confirm", "security", "alert",
     "immediately", "action required",
     "reset", "billing", "payment", "invoice",
-
-    # NEW
     "policy", "violation", "evidence", "activity"
 ]
 
@@ -31,26 +40,58 @@ trusted_services = [
 ]
 
 # =========================
-# 🔥 HOMOGLYPH DETECTION
+# SANDBOX (FIX)
+# =========================
+def test_url_in_sandbox(url):
+    if not API_KEY:
+        print("❌ Missing API KEY")
+        return None
+
+    headers = {
+        'API-Key': API_KEY,
+        'Content-Type': 'application/json'
+    }
+
+    clean_url = url.strip().rstrip('.,)')
+
+    data = {
+        "url": clean_url,
+        "visibility": "public"
+    }
+
+    try:
+        response = requests.post(
+            "https://urlscan.io/api/v1/scan/",
+            headers=headers,
+            json=data,
+            timeout=15
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            return f"https://urlscan.io/result/{result.get('uuid')}/"
+        else:
+            print("API ERROR:", response.status_code)
+
+    except Exception as e:
+        print("Sandbox error:", e)
+
+    return None
+
+# =========================
+# HOMOGLYPH
 # =========================
 def normalize_domain(domain):
     replacements = {
-        "0": "o",
-        "1": "l",
-        "3": "e",
-        "5": "s",
-        "7": "t",
-        "@": "a",
-        "$": "s"
+        "0": "o", "1": "l", "3": "e",
+        "5": "s", "7": "t", "@": "a", "$": "s"
     }
 
     normalized = ""
     for c in domain:
         normalized += replacements.get(c.lower(), c.lower())
 
-    normalized = normalized.replace("rn", "m")
-
-    return normalized
+    return normalized.replace("rn", "m")
 
 # =========================
 # URL EXTRACT
@@ -59,12 +100,9 @@ def extract_urls(text):
     urls = re.findall(r'https?://\S+|www\.\S+', text)
 
     anchor_patterns = [
-        "click here",
-        "verify your account",
-        "login now",
-        "reset password",
-        "view evidence",
-        "download"
+        "click here", "verify your account",
+        "login now", "reset password",
+        "view evidence", "download"
     ]
 
     found = []
@@ -75,7 +113,7 @@ def extract_urls(text):
     return urls + list(set(found))
 
 # =========================
-# URL ANALYZE
+# URL ANALYZE (UPGRADE)
 # =========================
 def analyze_url(url):
     score = 0
@@ -86,12 +124,17 @@ def analyze_url(url):
 
     parsed = urlparse(url)
     domain = parsed.netloc.lower()
+    path = parsed.path
+    query = parsed.query
 
-    # 🔥 check trusted
+    # Trusted nhưng query lạ
     if any(service in domain for service in trusted_services):
-        return 0, ["Domain thuộc hệ thống uy tín"]
+        if len(query) > 30:
+            score += 2
+            reasons.append("Domain uy tín nhưng query bất thường")
+        else:
+            return 0, ["Domain thuộc hệ thống uy tín"]
 
-    # 🔥 HOMOGLYPH CHECK
     normalized = normalize_domain(domain)
     fake_brands = ["paypal.com", "google.com", "microsoft.com", "amazon.com"]
 
@@ -100,6 +143,7 @@ def analyze_url(url):
             score += 3
             reasons.append(f"Domain giả mạo giống {brand}")
 
+    # RULE CŨ
     if any(char.isdigit() for char in domain):
         score += 2
         reasons.append("Domain chứa số")
@@ -120,6 +164,35 @@ def analyze_url(url):
         score += 1
         reasons.append("Không HTTPS")
 
+    # 🔥 RULE MỚI
+    if len(query) > 40:
+        score += 2
+        reasons.append("Query dài bất thường")
+
+    if query.count("&") >= 2:
+        score += 2
+        reasons.append("Nhiều tham số")
+
+    if url.count("?") > 1:
+        score += 2
+        reasons.append("Double query bất thường")
+
+    if "%" in url:
+        score += 1
+        reasons.append("URL encoding")
+
+    if "@" in url:
+        score += 3
+        reasons.append("Có @ (redirect giả mạo)")
+
+    if len(path) > 50:
+        score += 1
+        reasons.append("Path dài bất thường")
+
+    if any(ext in url for ext in [".exe", ".zip", ".rar", ".html"]):
+        score += 2
+        reasons.append("File đáng ngờ")
+
     return score, reasons
 
 # =========================
@@ -135,50 +208,14 @@ def analyze_sender(text):
         return None, [], 0
 
     email = match.group(1) if "<" in match.group(0) else match.group(0)
-    email = email.lower()
     domain = email.split("@")[-1]
 
-    reasons = []
     score = 0
+    reasons = []
 
-    brand_domains = {
-        "microsoft": ["outlook.com", "hotmail.com", "microsoft.com"],
-        "google": ["gmail.com", "google.com"],
-        "apple": ["apple.com", "icloud.com"],
-        "paypal": ["paypal.com"],
-        "amazon": ["amazon.com"]
-    }
-
-    text_lower = text.lower()
-
-    for brand, domains in brand_domains.items():
-        if brand in text_lower:
-            if not any(d in domain for d in domains):
-                score += 3
-                reasons.append(f"Giả danh {brand.upper()}")
-
-    # 🔥 HOMOGLYPH CHECK (SENDER)
-    normalized = normalize_domain(domain)
-
-    for brand, domains in brand_domains.items():
-        for real_domain in domains:
-            if real_domain not in domain and real_domain in normalized:
-                score += 3
-                reasons.append(f"Domain giả mạo giống {brand.upper()}")
-
-    trusted_flat = [d for sub in brand_domains.values() for d in sub] + ["edu.vn", "hutech.edu.vn"]
-
-    if not any(d in domain for d in trusted_flat):
-        score += 2
-        reasons.append("Domain người gửi không uy tín")
-
-    if any(x in domain for x in ["0", "1", "l", "rn"]):
+    if "0" in domain or "1" in domain:
         score += 1
-        reasons.append("Domain có dấu hiệu giả mạo ký tự")
-
-    if len(domain) > 25:
-        score += 1
-        reasons.append("Domain dài bất thường")
+        reasons.append("Domain có ký tự giả mạo")
 
     return email, reasons, score
 
@@ -191,12 +228,11 @@ def extract_features(text):
     extra = np.array([[len(text.split()), keyword_score]])
     return np.hstack((X, extra)), keyword_score
 
-# =========================
 def explain_text(text):
     return [w for w in phishing_keywords if w in text.lower()]
 
 # =========================
-# 🔥 RISK SCORING SYSTEM
+# RISK
 # =========================
 def calculate_risk(ai_prob, keyword_score, url_results, sender_score, text):
     risk = 0
@@ -205,8 +241,6 @@ def calculate_risk(ai_prob, keyword_score, url_results, sender_score, text):
     if ai_prob > 0.8:
         risk += 4
         reasons.append("AI đánh giá rất nguy hiểm")
-    elif ai_prob > 0.6:
-        risk += 2
 
     if keyword_score >= 3:
         risk += 2
@@ -215,26 +249,11 @@ def calculate_risk(ai_prob, keyword_score, url_results, sender_score, text):
     for u in url_results:
         if u["score"] >= 3:
             risk += 3
-            reasons.append("Link nguy hiểm")
         elif u["score"] >= 1:
             risk += 1
 
     if sender_score >= 3:
         risk += 3
-        reasons.append("Người gửi giả mạo")
-    elif sender_score >= 1:
-        risk += 1
-
-    if "{{" in text and "}}" in text:
-        risk += 4
-        reasons.append("Email template (phishing kit)")
-
-    if any(x in text.lower() for x in ["violation", "evidence", "urgent action"]):
-        risk += 2
-        reasons.append("Dấu hiệu gây áp lực")
-
-    if "edu.vn" in text.lower() or "university" in text.lower():
-        risk -= 2
 
     return risk, reasons
 
@@ -257,18 +276,22 @@ def predict():
     for url in urls:
         score, reasons = analyze_url(url)
 
+        sandbox_link = None
+        if "[ANCHOR]" not in url:
+            sandbox_link = test_url_in_sandbox(url)
+
+        status = "✅ An toàn"
         if score >= 3:
             status = "🚨 Nguy hiểm"
         elif score >= 1:
             status = "⚠️ Đáng ngờ"
-        else:
-            status = "✅ An toàn"
 
         url_results.append({
             "url": url,
             "score": score,
             "status": status,
-            "reasons": reasons
+            "reasons": reasons,
+            "sandbox": sandbox_link
         })
 
     sender_email, sender_reasons, sender_score = analyze_sender(text)
@@ -277,16 +300,7 @@ def predict():
         ai_prob, keyword_score, url_results, sender_score, text
     )
 
-    if risk_score >= 7:
-        prediction = 1
-        warning = "🚨 Nguy cơ cao (phishing)"
-    elif risk_score >= 4:
-        prediction = 1
-        warning = "⚠️ Email đáng ngờ"
-    else:
-        prediction = 0
-        warning = None
-
+    prediction = 1 if risk_score >= 4 else 0
     prob = max(ai_prob, min(risk_score / 10, 1))
 
     return render_template(
@@ -297,7 +311,6 @@ def predict():
         explain=explain_text(text),
         keyword_score=keyword_score,
         url_count=len(urls),
-        warning=warning,
         sender=sender_email,
         sender_reasons=sender_reasons,
         risk_score=risk_score,

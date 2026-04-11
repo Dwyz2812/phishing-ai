@@ -101,10 +101,14 @@
             margin-top: 10px;
         }
 
-        /* 🔥 NEW */
         .fake-domain {
             color: purple;
             font-weight: bold;
+        }
+
+        .sandbox-link {
+            margin-left: 15px;
+            color: #1890ff;
         }
 
     </style>
@@ -139,16 +143,9 @@
             </div>
         </div>
 
-        <!-- 🔥 CẢNH BÁO -->
         {% if warning %}
         <div class="box" style="background:#ffe6e6; color:red;">
-            <b>{{ warning }}</b><br>
-
-            {% if "Nguy cơ cao" in warning %}
-                <div class="alert-badge">High Risk Phishing</div>
-            {% elif "đáng ngờ" in warning %}
-                <div class="alert-badge">Suspicious Email</div>
-            {% endif %}
+            <b>{{ warning }}</b>
         </div>
         {% endif %}
 
@@ -175,7 +172,7 @@
                 <p class="safe">✅ An toàn</p>
             {% endif %}
 
-            {% if risk_reasons and risk_reasons|length > 0 %}
+            {% if risk_reasons %}
                 <ul class="reason">
                     {% for r in risk_reasons %}
                         <li>⚠️ {{ r }}</li>
@@ -198,16 +195,10 @@
             <h4>📧 Phân tích người gửi:</h4>
             <p><b>{{ sender }}</b></p>
 
-            {% if sender_reasons and sender_reasons|length > 0 %}
+            {% if sender_reasons %}
                 <ul class="reason">
                     {% for r in sender_reasons %}
-                        <li>
-                            🔸 {{ r }}
-
-                            {% if "homograph" in r %}
-                                <span class="fake-domain">⚠️ Fake domain</span>
-                            {% endif %}
-                        </li>
+                        <li>🔸 {{ r }}</li>
                     {% endfor %}
                 </ul>
             {% else %}
@@ -218,7 +209,7 @@
 
     {% endif %}
 
-    <!-- 🔗 URL -->
+    <!-- 🔗 URL + SANDBOX -->
     {% if urls and urls|length > 0 %}
     <div class="box">
         <h4>🔗 Phân tích đường link:</h4>
@@ -236,20 +227,31 @@
                 (score: {{ u.score }})
             </p>
 
-            {% if u.reasons and u.reasons|length > 0 %}
+            {% if u.reasons %}
                 <ul class="reason">
                     {% for r in u.reasons %}
                         <li>🔸 {{ r }}</li>
                     {% endfor %}
                 </ul>
             {% endif %}
+
+            <!-- 🔥 SANDBOX -->
+            {% if u.sandbox %}
+                <p class="sandbox-link">
+                    🧪 Sandbox:
+                    <a href="{{ u.sandbox }}" target="_blank">
+                        Xem phân tích chi tiết
+                    </a>
+                </p>
+            {% endif %}
+
         {% endfor %}
 
     </div>
     {% endif %}
 
     <!-- 🧠 EXPLAIN -->
-    {% if explain and explain|length > 0 %}
+    {% if explain %}
     <div class="box">
         <h4>🧠 Lý do bị đánh dấu:</h4>
         {% for w in explain %}
